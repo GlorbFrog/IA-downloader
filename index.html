@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Internet Archive Proxy (safe demo)</title>
+  <style>
+    :root{font-family:Inter,Segoe UI,Roboto,system-ui,Arial;--accent:#2563eb}
+    body{margin:0;background:#0f1724;color:#e6eef8;display:flex;align-items:center;justify-content:center;height:100vh}
+    .card{width:720px;max-width:94vw;background:linear-gradient(180deg,#071129, #061226);border-radius:12px;padding:20px;box-shadow:0 8px 30px rgba(2,6,23,.6)}
+    h1{margin:0 0 6px;font-size:20px}
+    p{margin:0 0 14px;color:#a9c0dd}
+    .row{display:flex;gap:8px}
+    input[type=text]{flex:1;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.06);background:transparent;color:inherit}
+    button{padding:10px 14px;border-radius:8px;border:0;background:var(--accent);color:white;cursor:pointer}
+    button[disabled]{opacity:.5;cursor:not-allowed}
+    .log{margin-top:12px;background:rgba(255,255,255,.02);padding:10px;border-radius:8px;min-height:64px;color:#cfe7ff;white-space:pre-wrap;font-family:monospace;font-size:13px}
+    small{color:#7fa1d6}
+    a.link{color:var(--accent);text-decoration:none}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Internet Archive proxy — safe demo</h1>
+    <p>Enter a URL from the Internet Archive (archive.org, web.archive.org, wayback.archive.org). This page sends the request to a small local proxy server which streams the response back so you can download files without CORS issues.</p>
+
+    <div class="row">
+      <input id="url" type="text" placeholder="https://archive.org/download/your_item/yourfile.zip" value=""/>
+      <button id="go">Fetch & Download</button>
+    </div>
+
+    <div class="log" id="log">Ready.</div>
+    <div style="margin-top:10px"><small>Note: This demo requires running the provided server locally. See the README in the code doc for server.js and run instructions.</small></div>
+  </div>
+
+  <script>
+    const logEl = document.getElementById('log');
+    const go = document.getElementById('go');
+    const urlInput = document.getElementById('url');
+
+    function log(msg){ logEl.textContent = typeof msg === 'string' ? msg : JSON.stringify(msg); }
+
+    async function fetchAndDownload(rawUrl){
+      try{
+        log('Sending request to proxy...');
+        go.disabled = true;
+        const proxyUrl = '/proxy?url=' + encodeURIComponent(rawUrl);
+        const res = await fetch(proxyUrl);
+        if(!res.ok) throw new Error('Server returned ' + res.status + ' ' + res.statusText);
+
+        // determine filename
+        const cd = res.headers.get('content-disposition');
+        let filename = 'download';
+        if(cd){
+          const m = /filename\*?=([^;]+)/i.exec(cd);
+          if(m) filename = decodeURIComponent(m[1].replace(/UTF-8''/i, ''));
+        } else {
+          try{ filename = new URL(rawUrl).pathname.split('/').pop() || filename }catch(e){}
+        }
+
+        log('Streaming response...');
+        const reader = res.body.getReader();
+        const stream = new ReadableStream({
+          start(controller){
+            function push(){
+              reader.read().then(({done, value}) => {
+                if(done){ controller.close(); return; }
+                controller.enqueue(value); push();
+              }).catch(err => { controller.error(err); });
+            }
+            push();
+          }
+        });
+
+        const blob = await new Response(stream).blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl; a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(blobUrl);
+        log('Download started: ' + filename + ' (' + Math.round(blob.size/1024) + ' KB)');
+      }catch(err){
+        console.error(err);
+        log('Error: ' + err.message);
+      }finally{ go.disabled = false; }
+    }
+
+    go.addEventListener('click',()=>{
+      const raw = urlInput.value.trim();
+      if(!raw){ log('Please enter a URL'); return; }
+      fetchAndDownload(raw);
+    });
+
+    urlInput.addEventListener('keydown',(e)=>{ if(e.key === 'Enter') go.click(); });
+  </script>
+</body>
+</html>
+
